@@ -4,13 +4,17 @@ import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
+import 'services/offence_store.dart';
 
 void main() {
   runApp(
-    // ChangeNotifierProvider makes a single AuthService available to the whole
-    // widget tree. `..tryAutoLogin()` kicks off restoring any saved session.
-    ChangeNotifierProvider(
-      create: (_) => AuthService()..tryAutoLogin(),
+    // MultiProvider registers more than one shared object for the whole app:
+    // AuthService (who's logged in) and OffenceStore (the local outbox).
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthService()..tryAutoLogin()),
+        ChangeNotifierProvider(create: (_) => OffenceStore()..load()),
+      ],
       child: const PoliceApp(),
     ),
   );
@@ -28,8 +32,7 @@ class PoliceApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      // The "auth gate": show Home if logged in, otherwise Login. Because it's a
-      // Consumer, it automatically switches the moment login/logout happens.
+      // Auth gate: Home if logged in, otherwise Login.
       home: Consumer<AuthService>(
         builder: (context, auth, _) {
           return auth.isLoggedIn ? const HomeScreen() : const LoginScreen();
