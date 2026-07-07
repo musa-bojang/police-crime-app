@@ -1,8 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/offence.dart';
+import '../models/offence_image.dart';
+import '../services/location_service.dart';
 import '../services/offence_store.dart';
+import '../services/photo_service.dart';
 
 class CaptureFormScreen extends StatefulWidget {
   const CaptureFormScreen({super.key});
@@ -13,8 +18,8 @@ class CaptureFormScreen extends StatefulWidget {
 
 class _CaptureFormScreenState extends State<CaptureFormScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _photoService = PhotoService();
 
-  // Fixed option lists. These strings are what get stored and later synced.
   static const _offenceTypes = [
     'speeding',
     'reckless_driving',
@@ -32,6 +37,9 @@ class _CaptureFormScreenState extends State<CaptureFormScreen> {
   String? _vehicleType;
   String? _driverGender;
   bool _driverFled = false;
+  bool _saving = false;
+
+  final List<CapturedPhoto> _photos = [];
 
   final _plate = TextEditingController();
   final _color = TextEditingController();
@@ -54,8 +62,28 @@ class _CaptureFormScreenState extends State<CaptureFormScreen> {
   String? _nullIfBlank(TextEditingController c) =>
       c.text.trim().isEmpty ? null : c.text.trim();
 
+  Future<void> _takePhoto() async {
+    final photo = await _photoService.takePhoto();
+    if (photo != null) {
+      setState(() => _photos.add(photo));
+    }
+  }
+
+  Future<void> _removePhoto(CapturedPhoto photo) async {
+    setState(() => _photos.remove(photo));
+    try {
+      await File(photo.filePath).delete();
+    } catch (_) {
+      // Best-effort cleanup; ignore if the file is already gone.
+    }
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _saving = true);
+
+    final position = await LocationService().getCurrentPosition();
 
     final offence = Offence.create(
       offenceType: _offenceType!,
@@ -68,15 +96,32 @@ class _CaptureFormScreenState extends State<CaptureFormScreen> {
       driverName: _nullIfBlank(_driverName),
       driverFled: _driverFled,
       locationDescription: _nullIfBlank(_location),
-      // latitude/longitude come in the GPS step.
+      latitude: position?.latitude,
+      longitude: position?.longitude,
     );
 
-    await context.read<OffenceStore>().add(offence);
+    // Turn the captured photos into image records linked to this offence.
+    final images = _photos
+        .map((ph) => OffenceImage.fromCapture(
+              id: ph.id,
+              offenceId: offence.id,
+              filePath: ph.filePath,
+              sha256Hash: ph.sha256Hash,
+              fileSize: ph.fileSize,
+              mimeType: ph.mimeType,
+              latitude: position?.latitude,
+              longitude: position?.longitude,
+            ))
+        .toList();
+
+    await context.read<OffenceStore>().add(offence, images: images);
 
     if (!mounted) return;
+    setState(() => _saving = false);
     Navigator.of(context).pop();
+    final photoNote = images.isEmpty ? '' : ' with ${images.length} photo(s)';
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Offence saved to device')),
+      SnackBar(content: Text('Offence saved$photoNote')),
     );
   }
 
@@ -188,13 +233,67 @@ class _CaptureFormScreenState extends State<CaptureFormScreen> {
                 alignLabelWithHint: true,
               ),
             ),
+            const SizedBox(height: 20),
+
+            // --- Evidence photos ---
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Evidence photos',
+                    style: Theme.of(context).textTheme.titleMedium),
+                OutlinedButton.icon(
+                  onPressed: _takePhoto,
+                  icon: const Icon(Icons.camera_alt),
+                  label: const Text('Take photo'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_photos.isEmpty)
+              const Text('No photos yet.',
+                  style: TextStyle(color: Colors.grey))
+            else
+              SizedBox(
+                height: 100,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _photos.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, i) {
+                    final photo = _photos[i];
+                    return Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(File(photo.filePath),
+                              width: 100, height: 100, fit: BoxFit.cover),
+                        ),
+                        Positioned(
+                          top: -8,
+                          right: -8,
+                          child: IconButton(
+                            icon: const Icon(Icons.cancel, color: Colors.red),
+                            onPressed: () => _removePhoto(photo),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+
             const SizedBox(height: 24),
             SizedBox(
               height: 48,
               child: FilledButton.icon(
-                onPressed: _save,
-                icon: const Icon(Icons.save),
-                label: const Text('Save offence'),
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.save),
+                label: Text(_saving ? 'Saving…' : 'Save offence'),
               ),
             ),
           ],
