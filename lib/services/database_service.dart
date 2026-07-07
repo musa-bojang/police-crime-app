@@ -21,7 +21,7 @@ class DatabaseService {
     final path = join(await getDatabasesPath(), 'police_app.db');
     return openDatabase(
       path,
-      version: 2, // bumped from 1 to add the images table
+      version: 2,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -33,7 +33,6 @@ class DatabaseService {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Existing installs already have the offences table from v1; just add images.
     if (oldVersion < 2) {
       await _createImages(db);
     }
@@ -97,6 +96,34 @@ class DatabaseService {
     return rows.map(Offence.fromMap).toList();
   }
 
+  /// Offences that still need to reach the server (never synced, or failed).
+  Future<List<Offence>> pendingOffences() async {
+    final db = await _database;
+    final rows = await db.query('offences',
+        where: "sync_status IN ('pending','failed')",
+        orderBy: 'created_at ASC');
+    return rows.map(Offence.fromMap).toList();
+  }
+
+  Future<void> updateOffenceSync(
+    String id, {
+    required String syncStatus,
+    String? referenceNumber,
+    String? serverStatus,
+  }) async {
+    final db = await _database;
+    final data = <String, dynamic>{'sync_status': syncStatus};
+    if (referenceNumber != null) data['reference_number'] = referenceNumber;
+    if (serverStatus != null) data['server_status'] = serverStatus;
+    await db.update('offences', data, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> deleteOffence(String id) async {
+    final db = await _database;
+    await db.delete('offence_images', where: 'offence_id = ?', whereArgs: [id]);
+    await db.delete('offences', where: 'id = ?', whereArgs: [id]);
+  }
+
   // --- Images ---
 
   Future<void> insertImage(OffenceImage image) async {
@@ -110,5 +137,19 @@ class DatabaseService {
     final rows = await db.query('offence_images',
         where: 'offence_id = ?', whereArgs: [offenceId]);
     return rows.map(OffenceImage.fromMap).toList();
+  }
+
+  Future<List<OffenceImage>> pendingImagesForOffence(String offenceId) async {
+    final db = await _database;
+    final rows = await db.query('offence_images',
+        where: "offence_id = ? AND sync_status = 'pending'",
+        whereArgs: [offenceId]);
+    return rows.map(OffenceImage.fromMap).toList();
+  }
+
+  Future<void> markImage(String id, String syncStatus) async {
+    final db = await _database;
+    await db.update('offence_images', {'sync_status': syncStatus},
+        where: 'id = ?', whereArgs: [id]);
   }
 }

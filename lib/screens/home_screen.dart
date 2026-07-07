@@ -5,20 +5,54 @@ import 'package:provider/provider.dart';
 import '../models/offence.dart';
 import '../services/auth_service.dart';
 import '../services/offence_store.dart';
+import '../services/sync_service.dart';
 import 'capture_form_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Try an initial sync when the screen first appears (if online & logged in).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<SyncService>().syncNow();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<OffenceStore>();
+    final sync = context.watch<SyncService>();
     final offences = store.offences;
+    final pending = store.pendingCount;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Offences'),
+        title: Text(pending > 0 ? 'Offences ($pending pending)' : 'Offences'),
         actions: [
+          // Sync button turns into a spinner while a sync is running.
+          if (sync.syncing)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              ),
+            )
+          else
+            IconButton(
+              tooltip: 'Sync now',
+              icon: const Icon(Icons.sync),
+              onPressed: () => context.read<SyncService>().syncNow(),
+            ),
           IconButton(
             tooltip: 'Sign out',
             icon: const Icon(Icons.logout),
@@ -55,12 +89,12 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.inbox, size: 64, color: Colors.grey),
+            Icon(Icons.cloud_done, size: 64, color: Colors.green),
             SizedBox(height: 12),
-            Text('No offences captured yet.',
-                style: TextStyle(fontSize: 16)),
+            Text('Outbox is empty.', style: TextStyle(fontSize: 16)),
             SizedBox(height: 4),
-            Text('Tap "New offence" to record one.',
+            Text('Everything captured has synced. Tap "New offence" to add one.',
+                textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey)),
           ],
         ),
@@ -80,13 +114,20 @@ class _OffenceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final time = DateFormat('d MMM, HH:mm').format(offence.capturedAt);
     final plate = offence.vehiclePlate ?? 'No plate';
+    final hasLocation = offence.latitude != null;
 
     return ListTile(
       leading: const Icon(Icons.directions_car),
       title: Text('${_label(offence.offenceType)}  •  $plate'),
-      subtitle: Text(offence.referenceNumber != null
-          ? '${offence.referenceNumber} · $time'
-          : time),
+      subtitle: Row(
+        children: [
+          Text(time),
+          if (hasLocation) ...[
+            const SizedBox(width: 6),
+            const Icon(Icons.location_on, size: 14, color: Colors.grey),
+          ],
+        ],
+      ),
       trailing: _SyncChip(status: offence.syncStatus),
     );
   }
