@@ -6,6 +6,7 @@ class User {
   final String? serviceNumber;
   final String? rank;
   final String? station;
+  final String? email;
   final List<String> roles;
 
   User({
@@ -14,6 +15,7 @@ class User {
     this.serviceNumber,
     this.rank,
     this.station,
+    this.email,
     this.roles = const [],
   });
 
@@ -24,6 +26,7 @@ class User {
       serviceNumber: json['service_number'] as String?,
       rank: json['rank'] as String?,
       station: json['station'] as String?,
+      email: json['email'] as String?,
       roles: (json['roles'] as List<dynamic>?)
               ?.map((e) => e.toString())
               .toList() ??

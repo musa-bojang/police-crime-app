@@ -3,10 +3,10 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/offence.dart';
-import '../services/auth_service.dart';
 import '../services/offence_store.dart';
 import '../services/sync_service.dart';
 import 'capture_form_screen.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,7 +19,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Try an initial sync when the screen first appears (if online & logged in).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<SyncService>().syncNow();
     });
@@ -36,7 +35,6 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text(pending > 0 ? 'Offences ($pending pending)' : 'Offences'),
         actions: [
-          // Sync button turns into a spinner while a sync is running.
           if (sync.syncing)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16),
@@ -54,9 +52,11 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => context.read<SyncService>().syncNow(),
             ),
           IconButton(
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AuthService>().logout(),
+            tooltip: 'My profile',
+            icon: const Icon(Icons.person),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ProfileScreen()),
+            ),
           ),
         ],
       ),

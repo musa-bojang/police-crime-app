@@ -7,7 +7,7 @@ import 'package:dio/dio.dart';
 //
 // PHYSICAL PHONE: change this to your PC's LAN IP (e.g. http://192.168.1.20:8000/api)
 // and start the server with `php artisan serve --host=0.0.0.0` so the phone can reach it.
-const String kBaseUrl = 'http://10.0.2.2:8000/api';
+const String kBaseUrl = 'https://police.accfagam.org/api';
 
 /// Thin wrapper around Dio. One instance is shared across the app so that once
 /// we set the auth token, every request carries it automatically.
