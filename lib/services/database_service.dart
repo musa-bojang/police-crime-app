@@ -22,7 +22,7 @@ class DatabaseService {
     final path = join(await getDatabasesPath(), 'police_app.db');
     return openDatabase(
       path,
-      version: 3, // v3 adds the watchlist cache
+      version: 4, // v4 adds the sightings outbox
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -32,11 +32,13 @@ class DatabaseService {
     await _createOffences(db);
     await _createImages(db);
     await _createWatchlist(db);
+    await _createSightings(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) await _createImages(db);
     if (oldVersion < 3) await _createWatchlist(db);
+    if (oldVersion < 4) await _createSightings(db);
   }
 
   Future<void> _createOffences(Database db) async {
@@ -99,6 +101,20 @@ class DatabaseService {
     ''');
     await db.execute(
         'CREATE INDEX idx_watchlist_plate ON watchlist_vehicles(plate_normalized)');
+  }
+
+  /// Outbox for sightings recorded while offline — pushed on next sync.
+  Future<void> _createSightings(Database db) async {
+    await db.execute('''
+      CREATE TABLE pending_sightings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        watchlist_vehicle_id INTEGER NOT NULL,
+        plate_checked TEXT,
+        latitude REAL,
+        longitude REAL,
+        sighted_at TEXT NOT NULL
+      )
+    ''');
   }
 
   // --- Offences ---
@@ -204,5 +220,33 @@ class DatabaseService {
   Future<void> clearWatchlist() async {
     final db = await _database;
     await db.delete('watchlist_vehicles');
+  }
+
+  // --- Sightings outbox ---
+
+  Future<void> queueSighting({
+    required int watchlistVehicleId,
+    String? plateChecked,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final db = await _database;
+    await db.insert('pending_sightings', {
+      'watchlist_vehicle_id': watchlistVehicleId,
+      'plate_checked': plateChecked,
+      'latitude': latitude,
+      'longitude': longitude,
+      'sighted_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> pendingSightings() async {
+    final db = await _database;
+    return db.query('pending_sightings', orderBy: 'sighted_at ASC');
+  }
+
+  Future<void> deletePendingSighting(int id) async {
+    final db = await _database;
+    await db.delete('pending_sightings', where: 'id = ?', whereArgs: [id]);
   }
 }

@@ -60,6 +60,7 @@ class SyncService extends ChangeNotifier {
       await _pushOffences();
       await _uploadImages();
       await _cleanupSynced();
+      await _pushSightings();
       await _pullWatchlist();
       await store.load(); // refresh the outbox list
       _message = 'Sync complete';
@@ -148,6 +149,32 @@ class SyncService extends ChangeNotifier {
         }
       }
       await _db.deleteOffence(o.id);
+    }
+  }
+
+  /// Push any sightings recorded while offline. Each is deleted locally only
+  /// after the server confirms it, so nothing is lost on a dropped connection.
+  Future<void> _pushSightings() async {
+    final pending = await _db.pendingSightings();
+    for (final s in pending) {
+      try {
+        await auth.api.dio.post(
+          '/watchlist/${s['watchlist_vehicle_id']}/sighting',
+          data: {
+            'plate_checked': s['plate_checked'],
+            'latitude': s['latitude'],
+            'longitude': s['longitude'],
+            'sighted_at': s['sighted_at'],
+          },
+        );
+        await _db.deletePendingSighting(s['id'] as int);
+      } on DioException catch (e) {
+        // A 404 means the entry was cleared server-side — drop the sighting.
+        if (e.response?.statusCode == 404) {
+          await _db.deletePendingSighting(s['id'] as int);
+        }
+        // Other errors: leave it queued and retry next sync.
+      }
     }
   }
 

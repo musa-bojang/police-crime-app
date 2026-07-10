@@ -6,6 +6,7 @@ import '../models/offence.dart';
 import '../services/offence_store.dart';
 import '../services/sync_service.dart';
 import 'capture_form_screen.dart';
+import 'plate_check_screen.dart';
 import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -51,6 +52,13 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: const Icon(Icons.sync),
               onPressed: () => context.read<SyncService>().syncNow(),
             ),
+          IconButton(
+            tooltip: 'Plate check',
+            icon: const Icon(Icons.search),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const PlateCheckScreen()),
+            ),
+          ),
           IconButton(
             tooltip: 'My profile',
             icon: const Icon(Icons.person),
