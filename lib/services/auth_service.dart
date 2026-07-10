@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/user.dart';
 import 'api_client.dart';
+import 'database_service.dart';
 
 /// Holds the authentication state for the whole app.
 ///
@@ -88,6 +89,7 @@ class AuthService extends ChangeNotifier {
     _user = null;
     _api.setToken(null);
     await _storage.delete(key: _tokenKey);
+    await DatabaseService.instance.clearWatchlist(); // don't leave sensitive data on the device
     notifyListeners();
   }
 

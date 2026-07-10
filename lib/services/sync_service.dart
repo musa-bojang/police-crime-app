@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/offence.dart';
 import '../models/offence_image.dart';
+import '../models/watchlist_vehicle.dart';
 import 'auth_service.dart';
 import 'database_service.dart';
 import 'offence_store.dart';
@@ -59,6 +60,7 @@ class SyncService extends ChangeNotifier {
       await _pushOffences();
       await _uploadImages();
       await _cleanupSynced();
+      await _pullWatchlist();
       await store.load(); // refresh the outbox list
       _message = 'Sync complete';
     } on DioException catch (e) {
@@ -147,6 +149,15 @@ class SyncService extends ChangeNotifier {
       }
       await _db.deleteOffence(o.id);
     }
+  }
+
+  /// Pull the active watchlist down and cache it locally for offline checks.
+  Future<void> _pullWatchlist() async {
+    final res = await auth.api.dio.get('/watchlist');
+    final list = (res.data['watchlist'] as List)
+        .map((e) => WatchlistVehicle.fromJson(e as Map<String, dynamic>))
+        .toList();
+    await _db.replaceWatchlist(list);
   }
 
   Map<String, dynamic> _offencePayload(Offence o, List<OffenceImage> imgs) => {

@@ -3,9 +3,10 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/offence.dart';
 import '../models/offence_image.dart';
+import '../models/watchlist_vehicle.dart';
 
-/// Owns the on-device SQLite database — the offline "outbox". Offences and their
-/// evidence photos are written here first, always, then read back for syncing.
+/// Owns the on-device SQLite database. Holds the outbox (offences + photos) and
+/// a cached copy of the active watchlist for offline plate checks.
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
@@ -21,7 +22,7 @@ class DatabaseService {
     final path = join(await getDatabasesPath(), 'police_app.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3, // v3 adds the watchlist cache
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -30,12 +31,12 @@ class DatabaseService {
   Future<void> _onCreate(Database db, int version) async {
     await _createOffences(db);
     await _createImages(db);
+    await _createWatchlist(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
-      await _createImages(db);
-    }
+    if (oldVersion < 2) await _createImages(db);
+    if (oldVersion < 3) await _createWatchlist(db);
   }
 
   Future<void> _createOffences(Database db) async {
@@ -82,6 +83,24 @@ class DatabaseService {
     ''');
   }
 
+  Future<void> _createWatchlist(Database db) async {
+    await db.execute('''
+      CREATE TABLE watchlist_vehicles (
+        id INTEGER PRIMARY KEY,
+        plate TEXT NOT NULL,
+        plate_normalized TEXT NOT NULL,
+        vehicle_make TEXT,
+        vehicle_color TEXT,
+        vehicle_type TEXT,
+        reason TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        instructions TEXT
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX idx_watchlist_plate ON watchlist_vehicles(plate_normalized)');
+  }
+
   // --- Offences ---
 
   Future<void> insertOffence(Offence offence) async {
@@ -96,7 +115,6 @@ class DatabaseService {
     return rows.map(Offence.fromMap).toList();
   }
 
-  /// Offences that still need to reach the server (never synced, or failed).
   Future<List<Offence>> pendingOffences() async {
     final db = await _database;
     final rows = await db.query('offences',
@@ -151,5 +169,40 @@ class DatabaseService {
     final db = await _database;
     await db.update('offence_images', {'sync_status': syncStatus},
         where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --- Watchlist cache ---
+
+  /// Replace the entire cached watchlist with a fresh copy from the server.
+  Future<void> replaceWatchlist(List<WatchlistVehicle> vehicles) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      await txn.delete('watchlist_vehicles');
+      for (final v in vehicles) {
+        await txn.insert('watchlist_vehicles', v.toMap());
+      }
+    });
+  }
+
+  /// Find any wanted vehicles whose normalised plate exactly matches.
+  Future<List<WatchlistVehicle>> searchWatchlist(String normalizedPlate) async {
+    final db = await _database;
+    final rows = await db.query('watchlist_vehicles',
+        where: 'plate_normalized = ?', whereArgs: [normalizedPlate]);
+    return rows.map(WatchlistVehicle.fromMap).toList();
+  }
+
+  Future<int> watchlistCount() async {
+    final db = await _database;
+    final result =
+        await db.rawQuery('SELECT COUNT(*) AS c FROM watchlist_vehicles');
+    return (result.first['c'] as int?) ?? 0;
+  }
+
+  /// Wipe the cached watchlist — called on logout so sensitive data doesn't
+  /// linger on the device.
+  Future<void> clearWatchlist() async {
+    final db = await _database;
+    await db.delete('watchlist_vehicles');
   }
 }
