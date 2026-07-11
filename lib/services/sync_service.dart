@@ -121,9 +121,20 @@ class SyncService extends ChangeNotifier {
           });
           await auth.api.dio.post('/sync/images/${img.id}/file', data: form);
           await _db.markImage(img.id, 'synced');
-        } on DioException {
-          // Includes a 422 hash-mismatch (server quarantined it) — mark failed.
-          await _db.markImage(img.id, 'failed');
+        } on DioException catch (e) {
+          if (e.response?.statusCode == 404) {
+            // The server doesn't know this image row — its metadata never
+            // registered (e.g. the offence hit the conflict path before the
+            // server learned about its photos). Flip the offence back to
+            // pending so the next sync re-pushes it, which registers the
+            // image metadata; the upload then succeeds on that pass.
+            await _db.updateOffenceSync(o.id, syncStatus: 'pending');
+          } else {
+            // Includes a 422 hash-mismatch (server quarantined it) and
+            // transient network failures — marked failed and retried on the
+            // next sync.
+            await _db.markImage(img.id, 'failed');
+          }
         }
       }
     }

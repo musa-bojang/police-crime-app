@@ -173,10 +173,12 @@ class DatabaseService {
     return rows.map(OffenceImage.fromMap).toList();
   }
 
+  /// Images that still need uploading — pending AND failed, so a failed
+  /// upload is retried on the next sync instead of being stranded.
   Future<List<OffenceImage>> pendingImagesForOffence(String offenceId) async {
     final db = await _database;
     final rows = await db.query('offence_images',
-        where: "offence_id = ? AND sync_status = 'pending'",
+        where: "offence_id = ? AND sync_status IN ('pending','failed')",
         whereArgs: [offenceId]);
     return rows.map(OffenceImage.fromMap).toList();
   }
