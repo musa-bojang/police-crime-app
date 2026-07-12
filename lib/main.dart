@@ -8,6 +8,8 @@ import 'services/offence_store.dart';
 import 'services/sync_service.dart';
 
 void main() {
+
+  WidgetsFlutterBinding.ensureInitialized(); // Needed for sqflite and secure storage to work before runApp().
   // Create the shared services up front so SyncService can reference the other
   // two, then hand them all to the widget tree with .value providers.
   final auth = AuthService()..tryAutoLogin();

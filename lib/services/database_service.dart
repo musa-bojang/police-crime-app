@@ -251,4 +251,10 @@ class DatabaseService {
     final db = await _database;
     await db.delete('pending_sightings', where: 'id = ?', whereArgs: [id]);
   }
+
+  /// Remove a local image row whose file is gone — nothing can be uploaded.
+  Future<void> deleteLocalImage(String id) async {
+    final db = await _database;
+    await db.delete('offence_images', where: 'id = ?', whereArgs: [id]);
+  }
 }
