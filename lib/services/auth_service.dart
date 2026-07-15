@@ -5,18 +5,29 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/user.dart';
 import 'api_client.dart';
 import 'database_service.dart';
+import 'pin_service.dart';
 
 /// Holds the authentication state for the whole app.
-///
-/// It extends ChangeNotifier: whenever something changes (login, logout,
-/// loading), it calls notifyListeners(), and any widget "watching" it rebuilds.
-/// That's how the UI reacts without us manually refreshing screens.
 class AuthService extends ChangeNotifier {
+  AuthService({required this.pin}) {
+    // Global 401 handler: if the server ever says the token is invalid
+    // (expired, revoked device, deactivated account), log out cleanly so the
+    // officer lands on the login screen instead of seeing broken requests.
+    _api.dio.interceptors.add(InterceptorsWrapper(
+      onError: (e, handler) async {
+        final isLoginCall = e.requestOptions.path.endsWith('/login');
+        if (e.response?.statusCode == 401 && !isLoginCall && isLoggedIn) {
+          await logout();
+        }
+        handler.next(e);
+      },
+    ));
+  }
+
+  final PinService pin;
   final ApiClient _api = ApiClient();
   final FlutterSecureStorage _storage = const FlutterSecureStorage(
-    aOptions: AndroidOptions(
-      encryptedSharedPreferences: true,
-    ),
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
   static const _tokenKey = 'auth_token';
@@ -31,18 +42,13 @@ class AuthService extends ChangeNotifier {
   bool get loading => _loading;
   String? get error => _error;
 
-  /// Exposed so later services (sync, image upload) can reuse the same
-  /// authenticated Dio instance.
   ApiClient get api => _api;
 
- /// Called once at app start: if a token was saved from a previous session,
-  /// restore it. Only a genuine 401 (token revoked/expired) logs the user
-  /// out — network failures keep the session so officers aren't bounced to
-  /// the login screen every time connectivity is poor.
+  /// Called once at app start. Only a genuine 401 (token revoked/expired)
+  /// logs the user out — network failures keep the session so officers
+  /// aren't bounced to the login screen when connectivity is poor.
   Future<void> tryAutoLogin() async {
     final saved = await _storage.read(key: _tokenKey);
-     // ignore: avoid_print
-    print('AUTO-LOGIN token=${saved == null ? "NULL" : "present"}');
     if (saved != null) {
       _token = saved;
       _api.setToken(saved);
@@ -50,15 +56,12 @@ class AuthService extends ChangeNotifier {
         final res = await _api.dio.get('/me');
         _user = User.fromJson(res.data as Map<String, dynamic>);
       } on DioException catch (e) {
-       
         if (e.response?.statusCode == 401) {
-          await logout(); // token genuinely invalid
+          await logout();
         }
-        // Any other failure (offline, timeout, server blip): keep the
-        // session. _user stays null until a later /me or sync succeeds;
-        // isLoggedIn is based on the token, so the officer stays in.
+        // Other failures (offline, timeout): keep the session.
       } catch (_) {
-        // Non-Dio errors: keep the session too.
+        // Non-Dio errors: keep the session.
       }
     }
     notifyListeners();
@@ -105,7 +108,8 @@ class AuthService extends ChangeNotifier {
     _user = null;
     _api.setToken(null);
     await _storage.delete(key: _tokenKey);
-    await DatabaseService.instance.clearWatchlist(); // don't leave sensitive data on the device
+    await DatabaseService.instance.clearWatchlist();
+    await pin.clearPin(); // next user of this device sets their own PIN
     notifyListeners();
   }
 
