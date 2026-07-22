@@ -217,6 +217,13 @@ class DatabaseService {
     return (result.first['c'] as int?) ?? 0;
   }
 
+  /// The ids currently cached — used to detect NEW entries on a pull.
+  Future<Set<int>> watchlistIds() async {
+    final db = await _database;
+    final rows = await db.query('watchlist_vehicles', columns: ['id']);
+    return rows.map((r) => r['id'] as int).toSet();
+  }
+
   /// Wipe the cached watchlist — called on logout so sensitive data doesn't
   /// linger on the device.
   Future<void> clearWatchlist() async {
@@ -250,11 +257,5 @@ class DatabaseService {
   Future<void> deletePendingSighting(int id) async {
     final db = await _database;
     await db.delete('pending_sightings', where: 'id = ?', whereArgs: [id]);
-  }
-
-  /// Remove a local image row whose file is gone — nothing can be uploaded.
-  Future<void> deleteLocalImage(String id) async {
-    final db = await _database;
-    await db.delete('offence_images', where: 'id = ?', whereArgs: [id]);
   }
 }

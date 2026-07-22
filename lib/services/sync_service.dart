@@ -1,6 +1,5 @@
-import 'dart:io';
 import 'dart:async';
-
+import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
@@ -11,6 +10,7 @@ import '../models/offence_image.dart';
 import '../models/watchlist_vehicle.dart';
 import 'auth_service.dart';
 import 'database_service.dart';
+import 'notification_service.dart';
 import 'offence_store.dart';
 
 /// The sync engine. Pushes pending offences to the API, uploads their photos
@@ -24,12 +24,18 @@ class SyncService extends ChangeNotifier {
       final online = results.any((r) => r != ConnectivityResult.none);
       if (online) syncNow();
     });
+
+    // Polling: while the app is alive, check for new watchlist alerts (and
+    // push anything pending) every 5 minutes even if the officer does nothing.
+    _pollTimer = Timer.periodic(const Duration(minutes: 5), (_) => syncNow());
   }
 
   final AuthService auth;
   final OffenceStore store;
   final DatabaseService _db = DatabaseService.instance;
   late final StreamSubscription _sub;
+  Timer? _pollTimer;
+  bool _watchlistPulledOnce = false;
 
   bool _syncing = false;
   bool get syncing => _syncing;
@@ -40,6 +46,7 @@ class SyncService extends ChangeNotifier {
   @override
   void dispose() {
     _sub.cancel();
+    _pollTimer?.cancel();
     super.dispose();
   }
 
@@ -106,26 +113,15 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-/// Step 2: upload the photo files for offences already on the server. The
+  /// Step 2: upload the photo files for offences already on the server. The
   /// server re-hashes each one and verifies it against the hash we sent.
   Future<void> _uploadImages() async {
     final offences = await _db.allOffences();
-    
     for (final o in offences) {
-      final allImgs = await _db.imagesForOffence(o.id);
-    
       if (o.syncStatus != 'synced') continue;
 
       final imgs = await _db.pendingImagesForOffence(o.id);
       for (final img in imgs) {
-        // If the file no longer exists on the device, nothing can ever be
-        // uploaded — remove the local row so the record can clean up. The
-        // offence data itself is already safely on the server.
-        if (!await File(img.filePath).exists()) {
-          await _db.deleteLocalImage(img.id);
-          continue;
-        }
-
         try {
           final form = FormData.fromMap({
             'file': await MultipartFile.fromFile(img.filePath,
@@ -134,22 +130,17 @@ class SyncService extends ChangeNotifier {
           await auth.api.dio.post('/sync/images/${img.id}/file', data: form);
           await _db.markImage(img.id, 'synced');
         } on DioException catch (e) {
-          final code = e.response?.statusCode;
-          if (code == 404) {
-            // Server doesn't know this image row — re-push the offence so
-            // its metadata registers; upload succeeds on the next pass.
+          if (e.response?.statusCode == 404) {
+            // The server doesn't know this image row — its metadata never
+            // registered (e.g. the offence hit the conflict path before the
+            // server learned about its photos). Flip the offence back to
+            // pending so the next sync re-pushes it, which registers the
+            // image metadata; the upload then succeeds on that pass.
             await _db.updateOffenceSync(o.id, syncStatus: 'pending');
-          } else if (code == 422) {
-            // Hash mismatch — the server has quarantined this file and will
-            // never accept these bytes. Retrying is pointless; remove it
-            // locally so the record can clean up. The quarantine and audit
-            // entry remain on the server as the documented record.
-            try {
-              await File(img.filePath).delete();
-            } catch (_) {}
-            await _db.deleteLocalImage(img.id);
           } else {
-            // Transient failure — retry on the next sync.
+            // Includes a 422 hash-mismatch (server quarantined it) and
+            // transient network failures — marked failed and retried on the
+            // next sync.
             await _db.markImage(img.id, 'failed');
           }
         }
@@ -207,12 +198,26 @@ class SyncService extends ChangeNotifier {
   }
 
   /// Pull the active watchlist down and cache it locally for offline checks.
+  /// Diff-aware: any entry whose id wasn't cached before triggers a local
+  /// notification — except on the first pull of a fresh (post-login) cache,
+  /// so officers aren't spammed with every existing alert at sign-in.
   Future<void> _pullWatchlist() async {
     final res = await auth.api.dio.get('/watchlist');
     final list = (res.data['watchlist'] as List)
         .map((e) => WatchlistVehicle.fromJson(e as Map<String, dynamic>))
         .toList();
+
+    final knownIds = await _db.watchlistIds();
+    final baselineExists = _watchlistPulledOnce || knownIds.isNotEmpty;
+
     await _db.replaceWatchlist(list);
+    _watchlistPulledOnce = true;
+
+    if (baselineExists) {
+      for (final v in list.where((v) => !knownIds.contains(v.id))) {
+        await NotificationService.instance.showWatchlistAlert(v);
+      }
+    }
   }
 
   Map<String, dynamic> _offencePayload(Offence o, List<OffenceImage> imgs) => {
